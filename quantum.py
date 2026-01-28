@@ -10,7 +10,7 @@ from datetime import datetime
 
 from sklearn.svm import SVR
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, GridSearchCV
 from sklearn.metrics import mean_squared_error, r2_score
 from scipy.stats import pearsonr
 
@@ -19,7 +19,7 @@ from qsvm_eeg.features import extract_features
 from qsvm_eeg.circuit import compute_kernel_matrix
 
 FS = 128
-AVAILABLE_PATIENTS = ["48", "411", "58"]
+AVAILABLE_PATIENTS = ["48", "411"]
 
 ROOT_DIR = Path.cwd()
 DATA_DIR = ROOT_DIR / "data" / "raw"
@@ -166,32 +166,54 @@ def main():
         X, y, test_size=0.2, shuffle=True, random_state=42
     )
 
-    logger.info("Scaling Data")
+    logger.info("Scaling Data (MinMax 0 to pi)")
     scaler = MinMaxScaler(feature_range=(0, np.pi))
     X_train_scaled = scaler.fit_transform(X_train)
     X_test_scaled = scaler.transform(X_test)
 
-    logger.info(f"Computing Quantum Kernels (Jobs={args.jobs})")
-
-    t0_train = time.perf_counter()
+    logger.info(f"Computing Quantum Kernel Matrix (Train) | Jobs={args.jobs}")
+    t0_kernel_train = time.perf_counter()
+    
     K_train = compute_kernel_matrix(X_train_scaled, X_train_scaled, n_jobs=args.jobs)
-    train_duration = time.perf_counter() - t0_train
+    
+    kernel_train_time = time.perf_counter() - t0_kernel_train
+    logger.info(f"Kernel Matrix (Train) Computed in {kernel_train_time:.4f}s")
 
-    t0_test = time.perf_counter()
+    logger.info("Starting Grid Search SVR (Quantum)")
+    t0_fit = time.perf_counter()
+
+    param_grid = {
+        'C': [0.1, 1, 10, 50, 100, 500, 1000],
+        'epsilon': [0.1, 0.5, 1.0, 2.0, 4.0]
+    }
+
+    grid_search = GridSearchCV(
+        SVR(kernel='precomputed'),
+        param_grid,
+        cv=5,
+        scoring='neg_root_mean_squared_error',
+        n_jobs=-1
+    )
+
+    grid_search.fit(K_train, y_train)
+    
+    fit_time = time.perf_counter() - t0_fit
+    
+    total_train_time = kernel_train_time + fit_time
+    
+    best_model = grid_search.best_estimator_
+    best_params = grid_search.best_params_
+
+    logger.success(f"Best Params: {best_params} | Best CV RMSE: {-grid_search.best_score_:.4f}")
+    logger.info(f"BENCHMARK | Kernel: {kernel_train_time:.2f}s + Tuning: {fit_time:.2f}s = Total: {total_train_time:.2f}s")
+
+    logger.info("Computing Quantum Kernel Matrix (Test)")
+    t0_test_kernel = time.perf_counter()
+    
     K_test = compute_kernel_matrix(X_test_scaled, X_train_scaled, n_jobs=args.jobs)
-    test_duration = time.perf_counter() - t0_test
-
-    logger.info(f"BENCHMARK | Train Kernel: {train_duration:.4f}s | Infer Kernel: {test_duration:.4f}s")
-
-    logger.info("Training SVR (C=20)")
-    t_start_fit = time.perf_counter()
-    model = SVR(kernel='precomputed', C=20.0, epsilon=0.1)
-    model.fit(K_train, y_train)
-    t_end_fit = time.perf_counter()
-
-    logger.info(f"BENCHMARK | Fit Time: {t_end_fit - t_start_fit:.4f}s")
-
-    y_pred = model.predict(K_test)
+    y_pred = best_model.predict(K_test)
+    
+    total_infer_time = time.perf_counter() - t0_test_kernel
 
     mse = mean_squared_error(y_test, y_pred)
     rmse = np.sqrt(mse)
@@ -201,34 +223,37 @@ def main():
     n = len(y_pred)
     overall_ci = 1.96 * np.std(y_pred - y_test) / np.sqrt(n)
 
-    logger.success(f"FINAL RESULTS | RMSE: {rmse:.4f} | R2: {r2:.4f} | R: {r_val:.4f}")
+    logger.success(f"FINAL RESULTS | RMSE: {rmse:.4f} | R2: {r2:.4f} | R: {r_val:.4f} | 95% CI: {overall_ci:.4f}")
 
     metrics = {
         'mse': mse, 'rmse': rmse, 'r2': r2,
         'pearson': r_val, 'ci': overall_ci,
-        'train_time': train_duration,
-        'infer_time': test_duration
+        'train_time': total_train_time,
+        'infer_time': total_infer_time
     }
-    params = {'n_samples': len(X), 'C': 20.0, 'epsilon': 0.1}
+    
+    params = {
+        'n_samples': len(X), 
+        'C': best_params['C'], 
+        'epsilon': best_params['epsilon']
+    }
 
     log_results(metrics, params, experiment_id)
 
-    fig1 = plt.figure(figsize=(10, 5))
-    plt.plot(y_test, label='Actual BIS', alpha=0.7)
-    plt.plot(y_pred, label='Quantum Prediction', linestyle='--')
-    plt.title(f"{experiment_id}: RMSE={rmse:.2f}, R2={r2:.2f} (N={len(X)})")
-    plt.legend()
-    save_plot(fig1, f"pred_actual_{experiment_id}")
+    # fig1 = plt.figure(figsize=(10, 5))
+    # plt.plot(y_test, label='Actual BIS', alpha=0.7)
+    # plt.plot(y_pred, label='Quantum Prediction', linestyle='--')
+    # plt.title(f"{experiment_id}: RMSE={rmse:.2f}, R2={r2:.2f} (N={len(X)})")
+    # plt.legend()
+    # save_plot(fig1, f"pred_actual_{experiment_id}")
 
-    fig2 = plt.figure(figsize=(8, 6))
-    plt.scatter(y_pred, y_test, alpha=0.5, color='purple')
-    plt.plot([min(y_pred), max(y_pred)], [min(y_pred), max(y_pred)], 'k--')
-    plt.xlabel("Predicted")
-    plt.ylabel("Actual")
-    plt.title(f"Correlation: {experiment_id}")
-    save_plot(fig2, f"corr_{experiment_id}")
-
-    # plt.show()
+    # fig2 = plt.figure(figsize=(8, 6))
+    # plt.scatter(y_pred, y_test, alpha=0.5, color='purple')
+    # plt.plot([min(y_pred), max(y_pred)], [min(y_pred), max(y_pred)], 'k--')
+    # plt.xlabel("Predicted")
+    # plt.ylabel("Actual")
+    # plt.title(f"Correlation: {experiment_id}")
+    # save_plot(fig2, f"corr_{experiment_id}")
 
 
 if __name__ == "__main__":
