@@ -12,7 +12,7 @@ foreach ($patients in $patient_configs) {
         Write-Host "Running Kernel-based QSVR: Patients [$patients] | Samples: $n"
         Write-Host "------------------------------------------------"
 
-        uv run main.py -p $patients.Split(' ') -n $n -j 1
+        uv run quantum.py -p $patients.Split(' ') -n $n -j 2
     }
 }
 
