@@ -1,15 +1,34 @@
-# NOTE: Running Kernel-based QSVR
-#       Running with arguments:
-#           -p, --patients :    List of patient IDs (e.g., "48" "411"). 
-#                               Default: ["48", "411"] - All available patients
-#           -n, --samples  :    Total number of samples to use (subsampled evenly). 
-#                               Default: All available data.
-#           -j, --jobs     :    Number of CPU workers for parallel kernel calculation.
-#                               Default: 8 cores/processors.
-#
-#                               * Use -j 1 for small tests or single-GPU laptop runs.
-#                               * Use -j 8 for NVIDIA A100/HPC runs to maximize throughput.
-#                               * Consider lower the number of jobs if getting out or memory error
+'''
+Kernel-based QSVR Experiment Runner.
+
+DESCRIPTION:
+    This script runs the baseline kernel based QSVR pipeline for comparison.
+
+USAGE:
+    # Run standalone
+    python quantum.py -p 48 411 -j 8
+
+    # Run via main.py
+    python main.py --mode quantum -p 48 411
+
+    # Check help
+    python quantum.py -h
+
+
+NOTE: Running Kernel-based QSVR
+      Running with arguments:
+          -p, --patients :    List of patient IDs (e.g., "48" "411").
+                              Default: ["48", "411"] - All available patients
+          -n, --samples  :    Total number of samples to use (subsampled evenly).
+                              Default: All available data.
+          -j, --jobs     :    Number of CPU workers for parallel kernel calculation.
+                              Default: 8 cores/processors.
+
+                              * Use -j 1 for small tests or single-GPU laptop runs.
+                              * Use -j 8 for NVIDIA A100/HPC runs to maximize throughput.
+                              * Consider lower the number of jobs if getting out or memory error
+
+'''
 
 import sys
 import time
@@ -88,7 +107,6 @@ def parse_arguments() -> argparse.Namespace:
         help="Broadcast Batch Size (e.g., 32768 for GPU, 500 for CPU)."
     )
 
-    # NEW ARGUMENT
     parser.add_argument(
         '-be', '--backend',
         type=str,
@@ -181,16 +199,14 @@ def process_single_patient(pid: str,
     return X, y
 
 
-def main():
-    args = parse_arguments()
-
+def run_quantum(args) -> dict:
     # Create experiment id
     if len(args.patients) == 1:
         experiment_id = f"Single_{args.patients[0]}"
     else:
         experiment_id = f"Mix_{'_'.join(args.patients)}"
 
-    logger.info(f"Starting Experiment: {experiment_id}")
+    logger.info(f"Starting Kernel-based QSVR Experiment: {experiment_id}")
     logger.info(f"Config: Samples={args.samples if args.samples else 'ALL'} | Jobs={args.jobs}")
 
     # Start: Load & process data
@@ -261,7 +277,8 @@ def main():
         param_grid,
         cv=5,
         scoring='neg_root_mean_squared_error',
-        n_jobs=-1
+        n_jobs=-1,
+        verbose=0,
     )
 
     grid_search.fit(K_train, y_train)
@@ -297,7 +314,7 @@ def main():
     n = len(y_pred)
     overall_ci = 1.96 * np.std(y_pred - y_test) / np.sqrt(n)
 
-    logger.success(f"FINAL RESULTS | RMSE: {rmse:.4f} | R2: {r2:.4f} | R: {r_val:.4f} | 95% CI: {overall_ci:.4f}")
+    logger.success(f"QUANTUM RESULTS | RMSE: {rmse:.4f} | R2: {r2:.4f} | R: {r_val:.4f} | 95% CI: {overall_ci:.4f}")
 
     metrics = {
         'mse': mse, 'rmse': rmse, 'r2': r2,
@@ -329,6 +346,13 @@ def main():
     plt.ylabel("Actual")
     plt.title(f"Correlation: {experiment_id}")
     save_plot(fig2, f"corr_{experiment_id}")
+
+    return metrics
+
+
+def main():
+    args = parse_arguments()
+    run_quantum(args)
 
 
 if __name__ == "__main__":
