@@ -72,7 +72,7 @@ def evaluate_and_log(model, X_test, y_test, run_id, figures_dir) -> str:
     plt.title(f"{model.name}: RMSE={rmse:.2f} | R2={r2:.2f}")
     plt.legend()
 
-    plot_path1 = figures_path / f"{run_id}_{model.name}_timeseries.png"
+    plot_path1 = figures_path / f"{run_id}_{model.name}_timeseries.pdf"
     fig1.savefig(plot_path1, dpi=300)
     mlflow.log_artifact(str(plot_path1), artifact_path="figures")
     plt.close(fig1)
@@ -84,7 +84,7 @@ def evaluate_and_log(model, X_test, y_test, run_id, figures_dir) -> str:
     plt.ylabel("Actual")
     plt.title(f"Correlation: {model.name} (R={r_val:.2f})")
 
-    plot_path2 = figures_path / f"{run_id}_{model.name}_corr.png"
+    plot_path2 = figures_path / f"{run_id}_{model.name}_corr.pdf"
     fig2.savefig(plot_path2, dpi=300)
     mlflow.log_artifact(str(plot_path2), artifact_path="figures")
     plt.close(fig2)
